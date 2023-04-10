@@ -58,4 +58,10 @@ public class TimerSvc extends Service {
             manager.createNotificationChannel(serviceChannel);
         }
     }
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startForegroundService();
+
+        return START_STICKY;
+    }
 }
