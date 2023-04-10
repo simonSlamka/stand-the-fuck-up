@@ -1,85 +1,115 @@
 package com.ongakken.standthefuckup;
 
 import android.Manifest;
-import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.content.Context;
-import android.content.pm.PackageManager;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CountDownTimer;
+import android.os.IBinder;
 import android.view.View;
-import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-import androidx.core.app.NotificationCompat;
-import androidx.core.app.NotificationManagerCompat;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import com.google.android.material.button.MaterialButton;
 
 public class MainActivity extends AppCompatActivity {
 
     private TextView timerTextView;
-    private Button startTimerButton;
-    private Button markAsDoneButton;
-    private Button postponeButton;
+    private MaterialButton startTimerButton;
+    private MaterialButton markAsDoneButton;
+    private MaterialButton postponeButton;
 
     private CountDownTimer countDownTimer;
+    private boolean timerRunning;
     private long timeLeftInMillis = 25 * 60 * 1000;
-    private List<String> userActionsLog = new ArrayList<>();
 
-    private final String CHANNEL_ID = "work_break_channel";
-    private final int NOTIFICATION_ID = 1;
+    private TimerSvc timerService;
+    private boolean serviceBound;
+
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            TimerSvc.TimerBinder binder = (TimerSvc.TimerBinder) service;
+            timerService = binder.getService();
+            serviceBound = true;
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            serviceBound = false;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        createNotificationChannel();
+
+        ActivityCompat.requestPermissions(this, new String[]{
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.POST_NOTIFICATIONS
+        }, 1);
+
         timerTextView = findViewById(R.id.timerTextView);
         startTimerButton = findViewById(R.id.startTimerButton);
         markAsDoneButton = findViewById(R.id.markAsDoneButton);
         postponeButton = findViewById(R.id.postponeButton);
 
-        createNotificationChannel();
-
         startTimerButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View view) {
-                startTimer();
+            public void onClick(View v) {
+                if (timerRunning) {
+                    pauseTimer();
+                } else {
+                    startTimer();
+                }
             }
         });
 
         markAsDoneButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View view) {
-                logAction("Mark as Done");
+            public void onClick(View v) {
+                // Your code to handle "Mark as Done" action
+                resetTimer();
                 startTimer();
             }
         });
 
         postponeButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View view) {
-                logAction("Postpone by 5min");
+            public void onClick(View v) {
+                // Your code to handle "Postpone" action
                 timeLeftInMillis += 5 * 60 * 1000;
                 startTimer();
             }
         });
+    }
 
-        ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.ACCESS_NOTIFICATION_POLICY}, 1);
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Intent intent = new Intent(this, TimerSvc.class);
+        bindService(intent, serviceConnection, BIND_AUTO_CREATE);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (serviceBound) {
+            unbindService(serviceConnection);
+            serviceBound = false;
+        }
     }
 
     private void startTimer() {
-        if (countDownTimer != null) {
-            countDownTimer.cancel();
-        }
-
         countDownTimer = new CountDownTimer(timeLeftInMillis, 1000) {
             @Override
             public void onTick(long millisUntilFinished) {
@@ -89,74 +119,66 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onFinish() {
-                sendWorkoutNotification();
-                logAction("Timer Finished");
-                timeLeftInMillis = 25 * 60 * 1000;
-                updateCountDownText();
+                timerRunning = false;
+                startTimerButton.setText("Start");
+                markAsDoneButton.setVisibility(View.VISIBLE);
+                postponeButton.setVisibility(View.VISIBLE);
+
+                if (serviceBound) {
+                    timerService.stopForegroundService();
+                }
             }
         }.start();
+
+        timerRunning = true;
+        startTimerButton.setText("Pause");
+        markAsDoneButton.setVisibility(View.INVISIBLE);
+
+        postponeButton.setVisibility(View.INVISIBLE);
+
+        if (serviceBound) {
+            timerService.startForegroundService();
+        }
+    }
+
+    private void pauseTimer() {
+        countDownTimer.cancel();
+        timerRunning = false;
+        startTimerButton.setText("Start");
+        markAsDoneButton.setVisibility(View.VISIBLE);
+        postponeButton.setVisibility(View.VISIBLE);
+
+        if (serviceBound) {
+            timerService.stopForegroundService();
+        }
+    }
+
+    private void resetTimer() {
+        timeLeftInMillis = 25 * 60 * 1000;
+        updateCountDownText();
     }
 
     private void updateCountDownText() {
         int minutes = (int) (timeLeftInMillis / 1000) / 60;
         int seconds = (int) (timeLeftInMillis / 1000) % 60;
+
         String timeFormatted = String.format("%02d:%02d", minutes, seconds);
         timerTextView.setText(timeFormatted);
     }
 
-    private void sendWorkoutNotification() {
-        String workout = getRandomWorkout();
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle("Time for a work break")
-                .setContentText("Suggested workout: " + workout)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setDefaults(Notification.DEFAULT_ALL);
-
-        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
-        notificationManager.notify(NOTIFICATION_ID, builder.build());
-    }
-
-    private String getRandomWorkout() {
-        // Add your workout suggestions here
-        String[] workouts = {
-                "Jumping Jacks",
-                "Push-ups",
-                "Plank",
-                "Lunges",
-                "Squats"
-        };
-
-        Random random = new Random();
-        return workouts[random.nextInt(workouts.length)];
-    }
-
-    private void logAction(String action) {
-        long currentTimeMillis = System.currentTimeMillis();
-        String timestamp = String.format("%1$tF %1$tT", currentTimeMillis);
-        userActionsLog.add(timestamp + ", " + action);
-    }
-
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            CharSequence name = "Work Break";
-            String description = "Work break notifications";
-            int importance = NotificationManager.IMPORTANCE_HIGH;
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, name, importance);
-            channel.setDescription(description);
+            NotificationChannel notificationChannel = new NotificationChannel(
+                    "TimerChannelID",
+                    "Timer Channel",
+                    NotificationManager.IMPORTANCE_LOW
+            );
 
-            NotificationManager notificationManager = getSystemService(NotificationManager.class);
-            notificationManager.createNotificationChannel(channel);
-        }
-    }
+            notificationChannel.setDescription("Channel for Timer notifications");
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode == 1) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted. You can now export logs to CSV when required.
-            } else {
-                // Permission denied. You won't be able to export logs to CSV.
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(notificationChannel);
             }
         }
     }
