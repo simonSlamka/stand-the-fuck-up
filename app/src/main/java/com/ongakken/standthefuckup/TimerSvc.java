@@ -1,15 +1,19 @@
 package com.ongakken.standthefuckup;
 
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Binder;
+import android.os.Build;
 import android.os.IBinder;
 
 import androidx.core.app.NotificationCompat;
 
 public class TimerSvc extends Service {
+    public static final String CHANNEL_ID = "timer_svc_channel";
 
     private final IBinder binder = new TimerBinder();
 
@@ -40,5 +44,18 @@ public class TimerSvc extends Service {
 
     public void stopForegroundService() {
         stopForeground(true);
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel serviceChannel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Foreground Service Channel",
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            manager.createNotificationChannel(serviceChannel);
+        }
     }
 }
