@@ -6,17 +6,21 @@ import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.CountDownTimer;
 import android.os.IBinder;
+import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
-
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
-
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import com.google.android.material.button.MaterialButton;
+
+import java.util.Timer;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -24,19 +28,25 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton startTimerButton;
     private MaterialButton markAsDoneButton;
     private MaterialButton postponeButton;
-
-    private CountDownTimer countDownTimer;
-    private boolean timerRunning;
-    private long timeLeftInMillis = 25 * 60 * 1000;
-
     private TimerSvc timerService;
     private boolean serviceBound;
+    private TimerBroadcastReceiver timerBroadcastReceiver;
+
+    private BroadcastReceiver timerUpdateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            long millisUntilFinished = intent.getLongExtra("millisUntilFinished", 0);
+            updateTimeTextView(millisUntilFinished);
+        }
+    };
 
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             TimerSvc.TimerBinder binder = (TimerSvc.TimerBinder) service;
             timerService = binder.getService();
+            long timeLeftInMillis = loadTimeLeftInMillis();
+            updateTimeTextView(timeLeftInMillis);
             serviceBound = true;
         }
 
@@ -45,6 +55,13 @@ public class MainActivity extends AppCompatActivity {
             serviceBound = false;
         }
     };
+
+    private void updateTimeTextView(long millisUntilFinished) {
+        int min = (int) (millisUntilFinished / 1000) / 60;
+        int sex = (int) (millisUntilFinished / 1000) % 60;
+        String timeFormatted = String.format("%02d:%02d", min, sex);
+        timerTextView.setText(timeFormatted);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,10 +84,13 @@ public class MainActivity extends AppCompatActivity {
         startTimerButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (timerRunning) {
-                    pauseTimer();
-                } else {
-                    startTimer();
+                Log.i("onclick", "Clicked START TIMER!");
+                if (serviceBound) {
+                    Log.i("onclick", "We're serviceBound!");
+                    timerService.startTimer();
+                    startTimerButton.setText("Pause");
+                    markAsDoneButton.setVisibility(View.INVISIBLE);
+                    postponeButton.setVisibility(View.INVISIBLE);
                 }
             }
         });
@@ -78,18 +98,26 @@ public class MainActivity extends AppCompatActivity {
         markAsDoneButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Your code to handle "Mark as Done" action
-                resetTimer();
-                startTimer();
+                if (serviceBound) {
+                    timerService.resetTimer();
+                    timerService.startTimer();
+                    startTimerButton.setText("Pause");
+                    markAsDoneButton.setVisibility(View.INVISIBLE);
+                    postponeButton.setVisibility(View.INVISIBLE);
+                }
             }
         });
 
         postponeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Your code to handle "Postpone" action
-                timeLeftInMillis += 5 * 60 * 1000;
-                startTimer();
+                if (serviceBound) {
+                    timerService.postponeTimer(5 * 60 * 1000);
+                    timerService.startTimer();
+                    startTimerButton.setText("Pause");
+                    markAsDoneButton.setVisibility(View.INVISIBLE);
+                    postponeButton.setVisibility(View.INVISIBLE);
+                }
             }
         });
     }
@@ -99,6 +127,9 @@ public class MainActivity extends AppCompatActivity {
         super.onStart();
         Intent intent = new Intent(this, TimerSvc.class);
         bindService(intent, serviceConnection, BIND_AUTO_CREATE);
+        timerBroadcastReceiver = new TimerBroadcastReceiver();
+        IntentFilter intentFilter = new IntentFilter("com.ongakken.standthefuckup.TIMER_UPDATE");
+        registerReceiver(timerBroadcastReceiver, intentFilter);
     }
 
     @Override
@@ -108,71 +139,15 @@ public class MainActivity extends AppCompatActivity {
             unbindService(serviceConnection);
             serviceBound = false;
         }
-    }
-
-    private void startTimer() {
-        countDownTimer = new CountDownTimer(timeLeftInMillis, 1000) {
-            @Override
-            public void onTick(long millisUntilFinished) {
-                timeLeftInMillis = millisUntilFinished;
-                updateCountDownText();
-            }
-
-            @Override
-            public void onFinish() {
-                timerRunning = false;
-                startTimerButton.setText("Start");
-                markAsDoneButton.setVisibility(View.VISIBLE);
-                postponeButton.setVisibility(View.VISIBLE);
-
-                if (serviceBound) {
-                    timerService.stopForegroundService();
-                }
-            }
-        }.start();
-
-        timerRunning = true;
-        startTimerButton.setText("Pause");
-        markAsDoneButton.setVisibility(View.INVISIBLE);
-
-        postponeButton.setVisibility(View.INVISIBLE);
-
-        if (serviceBound) {
-            timerService.startForegroundService();
-        }
-    }
-
-    private void pauseTimer() {
-        countDownTimer.cancel();
-        timerRunning = false;
-        startTimerButton.setText("Start");
-        markAsDoneButton.setVisibility(View.VISIBLE);
-        postponeButton.setVisibility(View.VISIBLE);
-
-        if (serviceBound) {
-            timerService.stopForegroundService();
-        }
-    }
-
-    private void resetTimer() {
-        timeLeftInMillis = 25 * 60 * 1000;
-        updateCountDownText();
-    }
-
-    private void updateCountDownText() {
-        int minutes = (int) (timeLeftInMillis / 1000) / 60;
-        int seconds = (int) (timeLeftInMillis / 1000) % 60;
-
-        String timeFormatted = String.format("%02d:%02d", minutes, seconds);
-        timerTextView.setText(timeFormatted);
+        unregisterReceiver(timerBroadcastReceiver);
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel notificationChannel = new NotificationChannel(
-                    "TimerChannelID",
+                    "timer_svc_channel",
                     "Timer Channel",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_HIGH
             );
 
             notificationChannel.setDescription("Channel for Timer notifications");
@@ -182,5 +157,17 @@ public class MainActivity extends AppCompatActivity {
                 manager.createNotificationChannel(notificationChannel);
             }
         }
+    }
+    public class TimerBroadcastReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            long millisUntilFinished = intent.getLongExtra("millisUntilFinished", 0);
+            updateTimeTextView(millisUntilFinished);
+        }
+    }
+
+    private long loadTimeLeftInMillis() {
+        SharedPreferences sharedPreferences = getSharedPreferences("timer_prefs", MODE_PRIVATE);
+        return sharedPreferences.getLong("time_left_in_millis", 25 * 60 * 1000);
     }
 }
